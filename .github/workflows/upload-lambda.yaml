@@ -1,0 +1,45 @@
+name: deploy to lambda
+on: [push]
+jobs:
+  deploy_zip:
+    name: deploy lambda function
+    runs-on: ubuntu-latest
+    environment: dev-bot
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSUMED_ROLE }}
+          aws-region: us-east-1
+
+      - name: Who am I?
+        run: |
+          aws sts get-caller-identity
+
+      - name: upload layer
+        run: |
+          set -x
+          mkdir -p python
+          # have to build in the runtime container to get cffi to go correctly
+          docker run --rm -d -w /build -v $(pwd):/build --name builder --entrypoint=/usr/bin/sleep public.ecr.aws/lambda/python:3.9  99999
+          docker exec builder pip install pipenv
+          docker exec builder pipenv requirements > requirements.txt
+          docker exec builder pip install -r requirements.txt -t python
+          zip -r python.zip python
+          aws lambda publish-layer-version \
+            --layer-name runet-dev-layer \
+            --license-info "MIT" \
+            --zip-file fileb://python.zip \
+            --compatible-runtimes python3.9
+      - name: upload function
+        run: |
+          zip -r webhooks.zip webhooks.py
+          aws lambda update-function-code \
+            --function-name artoo-dee-rue-dev-accepter \
+            --zip-file fileb://webhooks.zip
